@@ -1,0 +1,458 @@
+"use client";
+
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
+import { toast } from "sonner";
+import {
+  ArrowDownToLine,
+  FileText,
+  PanelLeft,
+  RefreshCw,
+  UploadCloud,
+} from "lucide-react";
+import { ModeToggle } from "@/components/mode-toggle";
+
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+import { buildThemeCss, themeOptions, type ThemeKey } from "@/lib/themes";
+import { sampleMarkdown } from "@/lib/sample-markdown";
+
+const defaultMetadata = {
+  title: "Strategy Brief",
+  author: "Product Team",
+};
+
+export function PdfWorkbench() {
+  const [markdown, setMarkdown] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("markdown-content");
+      return saved || sampleMarkdown;
+    }
+    return sampleMarkdown;
+  });
+  const [customCss, setCustomCss] = useState("");
+  const [theme, setTheme] = useState<ThemeKey>("serif");
+  const [fileName, setFileName] = useState("strategy-brief");
+  const [metadata, setMetadata] = useState(defaultMetadata);
+  const [isExporting, setIsExporting] = useState(false);
+  const [roundedCorners, setRoundedCorners] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(() => {
+    if (typeof window !== "undefined") {
+      const saved = localStorage.getItem("sidebar-visible");
+      return saved !== null ? saved === "true" : true;
+    }
+    return true;
+  });
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Save to local storage when changed
+  useEffect(() => {
+    localStorage.setItem("markdown-content", markdown);
+  }, [markdown]);
+
+  useEffect(() => {
+    localStorage.setItem("sidebar-visible", String(showSidebar));
+  }, [showSidebar]);
+
+  const stats = useMemo(() => {
+    const trimmed = markdown.trim();
+    const words = trimmed ? trimmed.split(/\s+/).length : 0;
+    return { characters: markdown.length, words };
+  }, [markdown]);
+
+  const previewCss = useMemo(() => {
+    const baseCss = buildThemeCss(theme, customCss);
+    if (!roundedCorners) {
+      return `${baseCss}
+.md-theme {
+  border: none !important;
+  border-radius: 0 !important;
+  max-width: none !important;
+  margin: 0 !important;
+  width: 100% !important;
+}`;
+    }
+    return baseCss;
+  }, [customCss, theme, roundedCorners]);
+
+  const sanitizeFileName = (value: string) =>
+    value
+      .trim()
+      .replace(/\s+/g, "-")
+      .replace(/[^a-zA-Z0-9-_]/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "markdown-document";
+
+  const handleFileSelection = useCallback(
+    async (file: File) => {
+      try {
+        const text = await file.text();
+        setMarkdown(text);
+        if (file.name.endsWith(".md")) {
+          setFileName(sanitizeFileName(file.name.replace(/\.md$/i, "")));
+        }
+        toast.success(`Loaded ${file.name}`);
+      } catch (error) {
+        console.error(error);
+        toast.error("Unable to read that file");
+      }
+    },
+    [],
+  );
+
+  const handleFileInputChange = useCallback(
+    async (event: React.ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0];
+      if (!file) return;
+
+      await handleFileSelection(file);
+      event.target.value = "";
+    },
+    [handleFileSelection],
+  );
+
+  const handleDownload = useCallback(async () => {
+    if (!markdown.trim()) {
+      toast.error("Add some Markdown before exporting");
+      return;
+    }
+
+    setIsExporting(true);
+    try {
+      const payload = {
+        markdown,
+        theme,
+        customCss,
+        fileName: sanitizeFileName(fileName),
+        metadata,
+        roundedCorners,
+      };
+
+      const response = await fetch("/api/pdf", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        throw new Error("Export failed");
+      }
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `${sanitizeFileName(fileName)}.pdf`;
+      anchor.click();
+      URL.revokeObjectURL(url);
+
+      toast.success("PDF exported successfully");
+    } catch (error) {
+      console.error(error);
+      toast.error("Unable to export PDF. Please try again.");
+    } finally {
+      setIsExporting(false);
+    }
+  }, [customCss, fileName, markdown, metadata, theme, roundedCorners]);
+
+  const resetToSample = useCallback(() => {
+    setMarkdown(sampleMarkdown);
+    setCustomCss("");
+    setTheme("serif");
+    setMetadata(defaultMetadata);
+    setMetadata(defaultMetadata);
+    setFileName("strategy-brief");
+    setRoundedCorners(false);
+  }, []);
+
+  return (
+    <div className="flex w-full flex-col gap-8 px-4 py-10 sm:px-6 lg:px-10">
+      <section className="flex flex-col items-center gap-5 text-center">
+        <div className="space-y-3">
+          <p className="inline-flex items-center gap-2 rounded-full border border-border/80 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            <FileText className="size-3.5" /> Markdown to PDF studio
+          </p>
+          <h1 className="text-balance font-serif text-4xl font-semibold tracking-tight sm:text-5xl">
+            Live Markdown preview with pixel-perfect PDF export
+          </h1>
+          <p className="text-balance text-muted-foreground text-lg">
+            Compose in Markdown, apply curated typography themes or drop in brand CSS,
+            then export a print-ready PDF without leaving the browser.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Button onClick={handleDownload} disabled={isExporting} size="lg">
+            <ArrowDownToLine className="size-4" />
+            {isExporting ? "Preparing PDF" : "Download PDF"}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="lg"
+            onClick={resetToSample}
+            disabled={isExporting}
+          >
+            <RefreshCw className="size-4" /> Reset to sample
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="lg"
+            onClick={() => setShowSidebar(!showSidebar)}
+          >
+            <PanelLeft className="size-4" />
+            {showSidebar ? "Hide controls" : "Show controls"}
+          </Button>
+        </div>
+      </section>
+
+      <div className="flex items-start">
+        <div
+          className={`shrink-0 overflow-hidden transition-all duration-500 ease-in-out ${showSidebar ? "w-[320px] mr-6 opacity-100" : "w-0 mr-0 opacity-0"
+            }`}
+        >
+          <div className="flex w-[320px] flex-col gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Document controls</CardTitle>
+                <CardDescription>
+                  Upload a Markdown file, adjust metadata, and choose a theme before
+                  exporting.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-5">
+                <div className="space-y-2">
+                  <Label>Markdown file</Label>
+                  <div className="flex flex-wrap gap-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => fileInputRef.current?.click()}
+                    >
+                      <UploadCloud className="size-4" /> Upload .md
+                    </Button>
+                    <div className="text-muted-foreground text-sm">
+                      {stats.words} words · {stats.characters} characters
+                    </div>
+                  </div>
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".md,text/markdown"
+                    className="hidden"
+                    onChange={handleFileInputChange}
+                  />
+                </div>
+
+                <div className="space-y-3">
+                  <div className="space-y-1.5">
+                    <Label htmlFor="fileName">File name</Label>
+                    <Input
+                      id="fileName"
+                      value={fileName}
+                      onChange={(event) => setFileName(event.target.value)}
+                      placeholder="e.g. quarterly-planning"
+                    />
+                  </div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label htmlFor="title">PDF title</Label>
+                      <Input
+                        id="title"
+                        value={metadata.title}
+                        onChange={(event) =>
+                          setMetadata((prev) => ({
+                            ...prev,
+                            title: event.target.value,
+                          }))
+                        }
+                        placeholder="Displayed in PDF metadata"
+                      />
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label htmlFor="author">Author</Label>
+                      <Input
+                        id="author"
+                        value={metadata.author}
+                        onChange={(event) =>
+                          setMetadata((prev) => ({
+                            ...prev,
+                            author: event.target.value,
+                          }))
+                        }
+                        placeholder="Name or team"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-1.5">
+                  <Label>Theme</Label>
+                  <Select
+                    value={theme}
+                    onValueChange={(value) => setTheme(value as ThemeKey)}
+                  >
+                    <SelectTrigger className="w-full justify-between">
+                      <span className="truncate">
+                        {themeOptions.find((option) => option.key === theme)
+                          ?.label || "Select a theme"}
+                      </span>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {themeOptions.map((option) => (
+                        <SelectItem key={option.key} value={option.key}>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="text-sm font-medium">
+                              {option.label}
+                            </span>
+                            <span className="text-muted-foreground text-xs">
+                              {option.description}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex flex-row items-center justify-between rounded-lg border p-3 shadow-sm">
+                  <div className="space-y-0.5">
+                    <Label htmlFor="rounded-corners" className="text-base">
+                      Rounded corners
+                    </Label>
+                    <p className="text-muted-foreground text-xs">
+                      Apply card styling with rounded corners to the PDF.
+                    </p>
+                  </div>
+                  <Switch
+                    id="rounded-corners"
+                    checked={roundedCorners}
+                    onCheckedChange={setRoundedCorners}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Custom CSS</CardTitle>
+                <CardDescription>
+                  Paste additional CSS tokens to align with a design system. They will
+                  be merged with the active theme for preview and PDF.
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Textarea
+                  value={customCss}
+                  onChange={(event) => setCustomCss(event.target.value)}
+                  placeholder={`.md-theme h1 {
+  letter-spacing: 0.08em;
+}`}
+                  className="font-mono text-sm"
+                  rows={8}
+                  spellCheck={false}
+                />
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+
+        <Card className="h-full min-w-0 flex-1 p-0">
+          <ResizablePanelGroup direction="horizontal" className="min-h-[600px]">
+            <ResizablePanel defaultSize={50} minSize={35}>
+              <div className="flex h-full flex-col">
+                <div className="flex items-center justify-between border-b px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Markdown editor</p>
+                    <p className="text-muted-foreground text-xs">
+                      Write or edit directly. Supports GitHub Flavored Markdown.
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                    .md
+                  </span>
+                </div>
+                <Textarea
+                  value={markdown}
+                  onChange={(event) => setMarkdown(event.target.value)}
+                  spellCheck={false}
+                  className="min-h-0 flex-1 resize-none rounded-none border-0 bg-transparent px-4 py-4 font-mono text-sm focus-visible:border-none focus-visible:ring-0"
+                />
+              </div>
+            </ResizablePanel>
+            <ResizableHandle withHandle={true} />
+            <ResizablePanel defaultSize={50} minSize={35}>
+              <div className="flex h-full flex-col">
+                <div className="flex items-center justify-between border-b px-4 py-3">
+                  <div>
+                    <p className="text-sm font-medium">Live preview</p>
+                    <p className="text-muted-foreground text-xs">
+                      Rendered with the selected theme + CSS.
+                    </p>
+                  </div>
+                  <span className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                    <SparklesIcon /> Styled
+                  </span>
+                </div>
+                <ScrollArea className="flex-1 min-w-0" horizontal>
+                  <div className="px-6 py-6">
+                    <style>{previewCss}</style>
+                    <div className="md-theme">
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        rehypePlugins={[rehypeRaw]}
+                      >
+                        {markdown || "_Start typing to preview your document..._"}
+                      </ReactMarkdown>
+                    </div>
+                  </div>
+                </ScrollArea>
+              </div>
+            </ResizablePanel>
+          </ResizablePanelGroup>
+        </Card>
+      </div>
+    </div>
+  );
+}
+
+function SparklesIcon() {
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      className="size-3.5 fill-current"
+      role="img"
+    >
+      <path d="M12 2l1.5 4.3L18 8l-4.5 1.7L12 14l-1.5-4.3L6 8l4.5-1.7L12 2zm6 6l1 2.5 2.5 1L19 13l-1 2.5L16.5 14 14 12.5l2.5-1L18 8zm-12 0l1 2.5 2.5 1L7 13l-1 2.5L4.5 14 2 12.5l2.5-1L6 8zm6 6l1.2 3.5L18 19l-3.8 1.5L12 24l-1.2-3.5L7 19l3.8-1.5L12 14z" />
+    </svg>
+  );
+}
